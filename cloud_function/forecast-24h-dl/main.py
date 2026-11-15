@@ -7,17 +7,19 @@
 #   3. builds the inputs, the SAME code as the final project notebooks: make_window() for a one-input model (FP1's
 #      Sequential LSTM: one 192-row table, past week + next 24 hours), make_inputs() for a two-input model (past, future):
 #        past   -> the last 168 hours of live load (ct_load_5min_hourly_master.csv) + hour of day
-#        future -> the weather for the next 24 hours + the calendar. Weather = the newest HRRR runs from Dr. Dave's
-#                  class file (HRRR_RUNS_URL) that reach a full day ahead; if that file is missing or stale, the newest
-#                  NWS forecast (bdl_weather_forecast_master.csv)
+#        future -> the weather for the next 24 hours + the calendar. Weather = the newest National Weather Service
+#                  forecast (bdl_weather_forecast_master.csv, saved by your scraper-weather-forecast every hour).
+#                  Optional extension: "weather": "hrrr" in the card uses the newest HRRR runs from Dr. Dave's class
+#                  file (HRRR_RUNS_URL) instead, with the NWS forecast as the fallback.
 #   4. makes the low, expected and high (an 80% range: 10th, 50th and 90th percentiles) the way your card says:
-#        "range_method": "none"                   -> FP1: one forecast, newest weather run, no range
-#        "range_method": "lstm_hrrr_runs"         -> FP2 option A: the model on each of the newest runs; the range is how
-#                                                    much the runs' forecasts disagree
-#        "range_method": "lstm_quantiles"         -> FP2 option B: a percentile model (several outputs per hour, listed in
-#                                                    "quantiles") on the newest run
-#        "range_method": "lstm_quantiles_pooled"  -> FP2 option C: the percentile model on each of the newest runs, every
-#                                                    percentile pooled into one pile per hour
+#        "range_method": "none"                   -> FP1: one forecast per hour, no range
+#        "range_method": "lstm_quantiles"         -> FP2: a percentile model (several outputs per hour, listed in
+#                                                    "quantiles"); low, expected and high are its own percentiles
+#      Optional HRRR extensions (they use several weather runs, so they always use HRRR):
+#        "range_method": "lstm_hrrr_runs"         -> the model on each of the newest runs; the range is how much the
+#                                                    runs' forecasts disagree
+#        "range_method": "lstm_quantiles_pooled"  -> the percentile model on each of the newest runs, every percentile
+#                                                    pooled into one pile per hour
 #      Low, expected and high are always the 10th, 50th and 90th percentile of each hour's pile, np.quantile(...,
 #      method="hazen"), exactly like the notebooks. "range_widen": 1.3 (optional) stretches the range 30%.
 #   5. writes 24 rows (target_hour_utc, predicted_low_mw, predicted_load_mw, predicted_high_mw, ...):
@@ -267,24 +269,35 @@ def run_once(dry_run: bool = False) -> dict:
                 "missing. The LSTM needs the past week: check scraper-isone."}
     past_load = past_load.interpolate(limit_direction="both")
 
-    # Weather: the newest HRRR runs that reach a full day ahead (one run for "none" and "lstm_quantiles")
-    n_runs = 1
-    if method in ["lstm_hrrr_runs", "lstm_quantiles_pooled"]:
-        n_runs = int(card.get("hrrr_runs", 3))
-    tables = hrrr_run_tables(targets, n_runs, now)
-    weather_source = "hrrr"
+    # Weather. The default (FP1 and FP2): the newest National Weather Service forecast, which your
+    # scraper-weather-forecast saves every hour at :05. Optional extension: "weather": "hrrr" in the card (or a range
+    # method that needs several runs) uses the newest HRRR runs from the class file instead, and falls back to the NWS
+    # forecast if that file is ever missing.
+    use_hrrr = str(card.get("weather", "nws")).lower() == "hrrr" or method in ["lstm_hrrr_runs", "lstm_quantiles_pooled"]
+    tables = []
+    weather_source = "nws"
     filled_weather = 0
+    if use_hrrr:
+        n_runs = 1
+        if method in ["lstm_hrrr_runs", "lstm_quantiles_pooled"]:
+            n_runs = int(card.get("hrrr_runs", 3))
+        tables = hrrr_run_tables(targets, n_runs, now)
+        weather_source = "hrrr"
     if len(tables) == 0:
         forecasts = read_csv(bucket, WEATHER_KEY)
         if forecasts is None or len(forecasts) == 0:
-            return {"status": "no_weather_data", "message": "No HRRR runs and no NWS forecast (scraper-weather-forecast)."}
+            return {"status": "no_weather_data", "message": "No weather forecast yet: check scraper-weather-forecast "
+                    "(it saves the National Weather Service forecast every hour at :05)."}
         nws = latest_weather(forecasts)[WEATHER].reindex(targets)
         filled_weather = int(nws.isna().sum().sum())
         nws = nws.interpolate(limit_direction="both")
         if nws.isna().any().any():
             return {"status": "no_weather_data", "message": "The weather forecast does not cover the next 24 hours yet."}
         tables = [nws]
-        weather_source = "nws_fallback"
+        if use_hrrr:
+            weather_source = "nws_fallback"
+        else:
+            weather_source = "nws"
 
     if len(model.inputs) == 1 and "columns" not in card:
         return {"status": "bad_card", "message": "This model has one input, so model_card.json needs the \"columns\" list "
@@ -301,7 +314,7 @@ def run_once(dry_run: bool = False) -> dict:
         low = expected - widen * (expected - low)
         high = expected + widen * (high - expected)
     range_method = method
-    if weather_source != "hrrr":
+    if weather_source == "nws_fallback":          # asked for HRRR, got the NWS forecast this hour
         range_method = method + "_nws"
 
     out = pd.DataFrame({"issued_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),

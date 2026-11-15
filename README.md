@@ -39,19 +39,22 @@ Each one ends by uploading `models/model.keras` and `models/model_card.json` to 
 ship is kept in `models/history/`.
 
 Every hour `forecast-24h-dl` loads your model and builds its input with the **same function as the notebook**:
-`make_window` for a one-input model (FP1: one 192-row table, the past week + the next 24 hours) or `make_inputs` for a
-two-input model (FP2: past and future). The weather comes from the newest HRRR runs in Dr. Dave's class file that reach a
-full day ahead, or the NWS forecast if that file is missing or stale. The card's `range_method` picks the range:
+`make_window` (one 192-row table: the past week + the next 24 hours; a two-input model with `make_inputs` also works).
+The weather is the **National Weather Service forecast** for Bradley that your `scraper-weather-forecast` saves every
+hour. The card's `range_method` picks the range:
 
 | `"range_method"` | Model | Low, expected and high |
 |---|---|---|
-| `"none"` | FP1 (one number per hour) | expected value only, newest weather run |
-| `"lstm_hrrr_runs"` | FP1 or FP2 | the 10th, 50th and 90th percentile of the forecasts made with each of the newest `hrrr_runs` runs (default 3) |
-| `"lstm_quantiles"` | FP2 (20 percentiles per hour) | the model's own 10th, 50th and 90th percentiles, newest weather run |
-| `"lstm_quantiles_pooled"` | FP2 | every run's 20 percentiles pooled into one pile per hour |
+| `"none"` | FP1 (one number per hour) | expected value only |
+| `"lstm_quantiles"` | FP2 (20 percentiles per hour) | the model's own 10th, 50th and 90th percentiles |
 
-`"range_widen": 1.3` (optional) stretches the range 30% around the expected value. When the NWS fallback is used,
-`range_method` gets `_nws` added to it.
+`"range_widen": 1.3` (optional) stretches the range 30% around the expected value (FP2 picks it on 2025).
+
+**Optional extension: HRRR weather.** `"weather": "hrrr"` in the card uses the newest run of NOAA's HRRR model from
+Dr. Dave's class file instead of the NWS forecast. Two range methods use several runs (and always HRRR):
+`"lstm_hrrr_runs"` (the spread of the forecasts made with each of the newest `hrrr_runs` runs, default 3) and
+`"lstm_quantiles_pooled"` (every run's 20 percentiles pooled into one pile per hour). If the HRRR file is ever missing,
+the NWS forecast is used and `range_method` gets `_nws` added to it.
 
 Every run also writes `forecasts/run_summary.json`: the function's name, the Keras version and your network's layers.
 The OPIM 5509 leaderboard reads it and only scores forecasts made by `forecast-24h-dl` with a Keras network.
