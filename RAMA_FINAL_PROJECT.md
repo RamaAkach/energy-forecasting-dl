@@ -16,7 +16,10 @@ Numbers (validation 2025 with HRRR as issued, trained 2023-24): see `notebooks/F
 in the chat summary.
 
 ## Files
-* `notebooks/FP_Final_Rama_Llama.ipynb` — the final project notebook (Colab, T4 GPU, ~15 min): data, the
+* `notebooks/FP2_Probabilistic_LSTM_Rama_Llama.ipynb` — **submit this as the Part 2 notebook**: FP2's Parts 0-9 with
+  my model; loads my three trained ensembles (`models/eval/`, `models/live/`) and recomputes every score and figure
+  (Figure 1 loss curve ... Figure 5 permutation importance, biggest-misses table). `RETRAIN = True` retrains them.
+* `notebooks/FP_Final_Rama_Llama.ipynb` — the shorter train-from-scratch version (Colab, T4 GPU, ~15 min): data, the
   `make_inputs` contract + check, network, 2025 calibration, 2026 test, final fit, ship.
 * `models/live/model.keras`, `models/live/model_card.json` — the trained model ready to ship.
 * `cloud_function/forecast-24h-dl/main.py` — `make_inputs_rama_v1` (word-for-word copy of the notebook's

@@ -35,7 +35,7 @@
   0.5,
   0.9
  ],
- "range_widen": 1.4,
+ "range_widen": 1.45,
  "weather": "hrrr",
  "members": 5,
  "epochs": 12,
@@ -49,14 +49,14 @@
   "weather": "HRRR as issued",
   "crps_mw": 69.0,
   "crps_skill": 0.741,
-  "inside_pct": 76.8,
-  "widen": 1.4
+  "inside_pct": 78.5,
+  "widen": 1.45
  },
  "valid_2025": {
   "trained": "2023-2024",
-  "crps_mw": 58.5,
+  "crps_mw": 58.6,
   "crps_skill": 0.762,
-  "inside_pct": 79.9,
-  "widen": 1.4
+  "inside_pct": 81.3,
+  "widen": 1.45
  }
 }
