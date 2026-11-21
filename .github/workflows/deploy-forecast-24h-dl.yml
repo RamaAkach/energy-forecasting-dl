@@ -5,6 +5,9 @@ name: Deploy forecast-24h-dl (CF Gen2 + Cloud Scheduler)
 
 on:
   workflow_dispatch:
+  push:                       # Rama: also redeploy whenever the function's code changes on main
+    branches: [main]
+    paths: ["cloud_function/forecast-24h-dl/**"]
 
 permissions:
   contents: read

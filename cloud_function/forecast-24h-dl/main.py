@@ -91,6 +91,41 @@ def calendar_features(hours_utc):
 
 
 def make_inputs(issue_hour_utc, load, weather, card):
+    """Dispatch on the card: "feature_set": "rama_v1" = Rama Llama's final project inputs (copied word for word from
+    the final project notebook), anything else = the course's make_inputs below."""
+    if card.get("feature_set") == "rama_v1":
+        return make_inputs_rama_v1(issue_hour_utc, load, weather, card)
+    return make_inputs_course(issue_hour_utc, load, weather, card)
+
+
+def make_inputs_rama_v1(issue_hour_utc, load, weather, card):
+    """Rama Llama's two inputs for ONE forecast issued at issue_hour_utc (hour T).
+    past   (168, 5):  the scaled load T-168 ... T-1, hour of day (sin, cos), day of week (sin, cos)
+    future (24, n):   the weather forecast for T+1 ... T+24 (card["weather_columns"], scaled), the 8 calendar columns,
+                      then 3 load anchors per hour (scaled): the same hour yesterday (2 days back for T+24, whose
+                      "yesterday" is hour T, not over yet), the same hour last week, and the newest hour T-1."""
+    issue = pd.Timestamp(issue_hour_utc)
+    lookback = int(card["lookback_hours"])
+    horizon = int(card["horizon_hours"])
+    past_hours = pd.date_range(issue - pd.Timedelta(hours=lookback), periods=lookback, freq="h")
+    future_hours = pd.date_range(issue + pd.Timedelta(hours=1), periods=horizon, freq="h")
+    past_load = (load.reindex(past_hours).values - card["load_mean"]) / card["load_std"]
+    past_cal = calendar_features(past_hours)[["hour_sin", "hour_cos", "dow_sin", "dow_cos"]].values
+    past = np.column_stack([past_load, past_cal])
+    columns = []
+    for column in card["weather_columns"]:
+        values = weather[column].reindex(future_hours).values
+        columns.append((values - card["weather_mean"][column]) / card["weather_std"][column])
+    future = np.column_stack(columns + [calendar_features(future_hours).values])
+    # position j in past_load is hour T-168+j: the same hour yesterday of T+h is j = 144+h (h = 1..23), T+24 -> j = 144
+    yesterday = past_load[np.r_[144 + np.arange(1, 24), 144]]
+    last_week = past_load[np.arange(1, 25)]
+    newest = np.repeat(past_load[-1], 24)
+    future = np.column_stack([future, yesterday, last_week, newest])
+    return past.astype("float32"), future.astype("float32")
+
+
+def make_inputs_course(issue_hour_utc, load, weather, card):
     """The model's two inputs for ONE forecast issued at issue_hour_utc.
     load: Connecticut load in MW indexed by UTC hour (only hours that are over).
     weather: the WEATHER columns indexed by UTC hour, covering the next 24 hours.
@@ -137,6 +172,31 @@ def make_window(issue_hour_utc, load, weather, card):
 # ----------------------------------------------------------------------------------------------------------------
 
 
+LAT, LON = 41.9389, -72.6832     # Bradley airport
+
+
+def weather_columns(card):
+    """The weather columns this model reads: the card's list (Rama Llama's model adds solar_wm2), else the course's 5."""
+    return list(card.get("weather_columns", WEATHER))
+
+
+def solar_proxy(hours_utc, cloud_cover_pct):
+    """Sunlight at Bradley (W/m2) from the sun's position and the cloud cover, for the rare hour the HRRR file (which has
+    solar_wm2) is missing and the NWS forecast (which doesn't) is used: clear-sky sunlight x (1 - 0.75 x cloud^3.4)."""
+    t = pd.DatetimeIndex(hours_utc)
+    hour = t.hour.values + t.minute.values / 60
+    g = 2 * np.pi / 365 * (t.day_of_year.values - 1 + (hour - 12) / 24)
+    decl = (0.006918 - 0.399912 * np.cos(g) + 0.070257 * np.sin(g) - 0.006758 * np.cos(2 * g) + 0.000907 * np.sin(2 * g)
+            - 0.002697 * np.cos(3 * g) + 0.00148 * np.sin(3 * g))
+    eqt = 229.18 * (0.000075 + 0.001868 * np.cos(g) - 0.032077 * np.sin(g) - 0.014615 * np.cos(2 * g) - 0.040849 * np.sin(2 * g))
+    hour_angle = np.radians((hour * 60 + eqt + 4 * LON) / 4 - 180)
+    lat = np.radians(LAT)
+    cos_z = np.clip(np.sin(lat) * np.sin(decl) + np.cos(lat) * np.cos(decl) * np.cos(hour_angle), 0, None)
+    clear = 1098 * cos_z * np.exp(-0.057 / np.maximum(cos_z, 1e-3)) * (cos_z > 0)
+    cloud = np.clip(np.asarray(cloud_cover_pct, dtype=float) / 100, 0, 1)
+    return clear * (1 - 0.75 * cloud ** 3.4)
+
+
 def read_csv(bucket, key):
     blob = bucket.blob(key)
     if not blob.exists():
@@ -153,9 +213,11 @@ def latest_weather(forecasts: pd.DataFrame) -> pd.DataFrame:
     return newest
 
 
-def hrrr_run_tables(targets, n_runs, now):
+def hrrr_run_tables(targets, n_runs, now, columns=None):
     """The newest n_runs HRRR runs from the class file that cover ALL the target hours (an LSTM needs the whole day),
     newest last: a list of weather tables indexed by UTC hour. Empty when the file is missing or stale."""
+    if columns is None:
+        columns = WEATHER
     try:
         runs = pd.read_csv(HRRR_RUNS_URL)
     except Exception as err:
@@ -168,7 +230,9 @@ def hrrr_run_tables(targets, n_runs, now):
         return []
     tables = []
     for init in inits:
-        table = runs[runs["init_utc"] == init].set_index("hour_utc")[WEATHER]
+        if not set(columns).issubset(runs.columns):
+            return []
+        table = runs[runs["init_utc"] == init].set_index("hour_utc")[columns]
         if targets.isin(table.index).all() and not table.reindex(targets).isna().any().any():
             tables.append(table)
     return tables[-n_runs:]
@@ -281,7 +345,7 @@ def run_once(dry_run: bool = False) -> dict:
         n_runs = 1
         if method in ["lstm_hrrr_runs", "lstm_quantiles_pooled"]:
             n_runs = int(card.get("hrrr_runs", 3))
-        tables = hrrr_run_tables(targets, n_runs, now)
+        tables = hrrr_run_tables(targets, n_runs, now, weather_columns(card))
         weather_source = "hrrr"
     if len(tables) == 0:
         forecasts = read_csv(bucket, WEATHER_KEY)
@@ -291,6 +355,8 @@ def run_once(dry_run: bool = False) -> dict:
         nws = latest_weather(forecasts)[WEATHER].reindex(targets)
         filled_weather = int(nws.isna().sum().sum())
         nws = nws.interpolate(limit_direction="both")
+        if "solar_wm2" in weather_columns(card):        # the NWS forecast has no sunlight: estimate it from cloud cover
+            nws["solar_wm2"] = solar_proxy(nws.index, nws["cloud_cover_pct"].values)
         if nws.isna().any().any():
             return {"status": "no_weather_data", "message": "The weather forecast does not cover the next 24 hours yet."}
         tables = [nws]
