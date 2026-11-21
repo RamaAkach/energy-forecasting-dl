@@ -1,0 +1,47 @@
+{
+ "model_type": "keras_gru_ensemble",
+ "feature_set": "rama_v1",
+ "lookback_hours": 168,
+ "horizon_hours": 24,
+ "weather_columns": [
+  "temp_f",
+  "dewpoint_f",
+  "rel_humidity_pct",
+  "wind_speed_mph",
+  "cloud_cover_pct",
+  "solar_wm2"
+ ],
+ "load_mean": 3042.158063766683,
+ "load_std": 674.5284117650118,
+ "weather_mean": {
+  "temp_f": 52.04600985048262,
+  "dewpoint_f": 42.316506109468726,
+  "rel_humidity_pct": 70.7160563578055,
+  "wind_speed_mph": 6.687100362610059,
+  "cloud_cover_pct": 59.685272787630396,
+  "solar_wm2": 172.17776841460145
+ },
+ "weather_std": {
+  "temp_f": 18.344092118467064,
+  "dewpoint_f": 17.475534815565613,
+  "rel_humidity_pct": 18.64255267614781,
+  "wind_speed_mph": 3.790107153374671,
+  "cloud_cover_pct": 44.95581565342967,
+  "solar_wm2": 258.3682146549997
+ },
+ "range_method": "lstm_quantiles",
+ "quantiles": [
+  0.1,
+  0.5,
+  0.9
+ ],
+ "range_widen": 1.3,
+ "weather": "hrrr",
+ "members": 5,
+ "epochs": 12,
+ "units": 128,
+ "trained_through_utc": "2025-12-31 23:00:00+00:00",
+ "test_mae_mw": 0.0,
+ "trained_at": "2026-11-21T03:49:40Z",
+ "note": ""
+}
