@@ -1,5 +1,6 @@
 google-cloud-storage>=2.16.0
 pandas>=2.2.2
 numpy>=2.0.0
-tensorflow-cpu>=2.19.0
-keras>=3.10.0
+# pinned to the exact versions the Rama Llama model was trained and tested with, so model.keras always loads
+tensorflow-cpu==2.20.0
+keras==3.15.1

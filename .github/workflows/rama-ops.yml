@@ -1,0 +1,83 @@
+name: Rama ops (ship model + snapshot live data)
+# 1. Ship: a push to main that changes models/live/ uploads model.keras + model_card.json to the bucket (the live model,
+#    plus a dated copy in energy/models/history/ for rollback) and runs forecast-24h-dl right away.
+# 2. Snapshot: every hour (and after every ship) copies the live datasets from the bucket to the `live-data` branch, so
+#    live performance can be checked from the repo.
+# Needs (once): the deployer service account may read/write the bucket:
+#   gcloud storage buckets add-iam-policy-binding gs://BUCKET --member=serviceAccount:DEPLOYER_SA --role=roles/storage.objectAdmin
+
+on:
+  push:
+    branches: [main]
+    paths: ["models/live/**"]
+  schedule:
+    - cron: "45 * * * *"           # :45 UTC every hour, after the collector scores at :35 ET
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: rama-ops
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ vars.PROJECT_ID }}
+  REGION: ${{ vars.REGION }}
+  BUCKET_NAME: ${{ vars.BUCKET_NAME }}
+
+jobs:
+  ops:
+    if: github.repository_owner != 'drdave-teaching'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.PROJECT_ID }}
+
+      - name: Ship the model in models/live/
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f models/live/model.keras
+          test -f models/live/model_card.json
+          python3 -c "import json; c = json.load(open('models/live/model_card.json')); print('shipping', c.get('trained_at'), c.get('range_method'), 'widen', c.get('range_widen'))"
+          STAMP=$(python3 -c "import json; print(json.load(open('models/live/model_card.json'))['trained_at'].replace(':', '-'))")
+          B="gs://${BUCKET_NAME}/energy/models"
+          gcloud storage cp models/live/model.keras "${B}/history/model_${STAMP}.keras"
+          gcloud storage cp models/live/model_card.json "${B}/history/model_card_${STAMP}.json"
+          gcloud storage cp models/live/model.keras "${B}/model.keras"
+          gcloud storage cp models/live/model_card.json "${B}/model_card.json"
+          gcloud scheduler jobs run forecast-24h-dl-hourly --location="${REGION}" || echo "::warning::could not start the job now; it runs at :20 anyway"
+          sleep 90
+
+      - name: Snapshot live data to the live-data branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/snap
+          B="gs://${BUCKET_NAME}/energy"
+          for f in datasets/ct_load_5min_hourly_master.csv datasets/forecasts_master.csv datasets/bdl_weather_forecast_master.csv \
+                   datasets/isone_ct_forecast_master.csv forecasts/latest.csv forecasts/run_summary.json models/model_card.json; do
+            gcloud storage cp "${B}/${f}" "/tmp/snap/$(basename ${f})" || echo "missing ${f}"
+          done
+          gcloud storage ls "${B}/models/history/" > /tmp/snap/models_history.txt || true
+          date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/snap/snapshot_utc.txt
+          cd /tmp/snap
+          git init -q -b live-data
+          git config user.name "rama-ops"
+          git config user.email "rama-ops@users.noreply.github.com"
+          git add -A
+          git commit -q -m "live data snapshot $(cat snapshot_utc.txt)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" live-data
