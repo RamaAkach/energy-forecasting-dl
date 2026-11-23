@@ -35,7 +35,7 @@
   0.5,
   0.9
  ],
- "range_widen": 1.45,
+ "range_widen": 1.1,
  "weather": "hrrr",
  "members": 5,
  "epochs": 12,
@@ -58,5 +58,7 @@
   "crps_skill": 0.762,
   "inside_pct": 81.3,
   "widen": 1.45
- }
+ },
+ "range_widen_2025_rule": 1.45,
+ "live_recalibration": "Mon Nov 23: 93% of live hours inside at 1.45 (Nov 20-23); 1.1 cuts live CRPS ~1.3-2.5 MW, costs ~0.7 MW on 2025"
 }
